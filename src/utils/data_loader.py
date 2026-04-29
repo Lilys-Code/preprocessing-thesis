@@ -1,56 +1,110 @@
 import os
-import cv2
-import numpy as np
+import pandas as pd
 from sklearn.model_selection import train_test_split
+from sklearn.utils.class_weight import compute_class_weight
+import numpy as np
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
-def load_dataset(data_dir, img_size=(224, 224)):
-    images = []
-    labels = []
-    class_names = sorted(os.listdir(data_dir))
 
-    for label, class_name in enumerate(class_names):
-        class_path = os.path.join(data_dir, class_name)
+def get_data_generators(
+    data_dir,
+    img_size=(224, 224),
+    batch_size=32,
+    preprocessing_function=None,
+    train_split=0.70,
+    val_split=0.15,
+    rescale=1.0 / 255,
+    seed=42,
+):
+    """Build train, validation, and test generators from a directory of class folders.
 
-        for img_name in os.listdir(class_path):
-            img_path = os.path.join(class_path, img_name)
-            img = cv2.imread(img_path)
+    The dataset is split into train/val/test using a stratified 70/15/15 ratio so
+    that each subset preserves the original class distribution. The training
+    generator applies random augmentation (rotations, flips, zoom, brightness
+    jitter) to improve generalisation. Validation and test generators use only the
+    rescale and preprocessing_function so that evaluation is deterministic.
 
-            if img is None:
-                continue
+    The `preprocessing_function` argument is passed directly to ImageDataGenerator
+    and is used to inject a pipeline function (e.g. CLAHE or HSV conversion) into
+    the per-image loading step.
+    """
+    filepaths, labels = [], []
+    class_names = sorted(
+        d for d in os.listdir(data_dir)
+        if os.path.isdir(os.path.join(data_dir, d))
+    )
 
-            img = cv2.resize(img, img_size)
-            images.append(img)
-            labels.append(label)
+    for class_name in class_names:
+        class_dir = os.path.join(data_dir, class_name)
+        for fname in os.listdir(class_dir):
+            fpath = os.path.join(class_dir, fname)
+            if os.path.isfile(fpath):
+                filepaths.append(fpath)
+                labels.append(class_name)
 
-    X = np.array(images)
-    y = np.array(labels)
+    # Stratified 3-way split — train first, then divide the remainder into val and test
+    X_train, X_temp, y_train, y_temp = train_test_split(
+        filepaths, labels, test_size=1.0 - train_split, stratify=labels, random_state=seed
+    )
+    # Proportion of the held-out portion that becomes the test set
+    test_ratio = (1.0 - train_split - val_split) / (1.0 - train_split)
+    X_val, X_test, y_val, y_test = train_test_split(
+        X_temp, y_temp, test_size=test_ratio, stratify=y_temp, random_state=seed
+    )
 
-    return train_test_split(X, y, test_size=0.2, random_state=42), class_names
+    train_df = pd.DataFrame({"filepath": X_train, "label": y_train})
+    val_df = pd.DataFrame({"filepath": X_val, "label": y_val})
+    test_df = pd.DataFrame({"filepath": X_test, "label": y_test})
 
-def get_data_generators(data_dir, img_size=(224, 224), batch_size=32, preprocessing_function=None, validation_split=0.2, rescale=1./255):
-    datagen = ImageDataGenerator(
+    # Augmentation is applied only during training; val/test use a fixed pipeline
+    train_datagen = ImageDataGenerator(
         rescale=rescale,
-        validation_split=validation_split,
-        preprocessing_function=preprocessing_function
+        preprocessing_function=preprocessing_function,
+        rotation_range=30,
+        horizontal_flip=True,
+        vertical_flip=True,
+        zoom_range=0.2,
+        brightness_range=[0.8, 1.2],
+    )
+    eval_datagen = ImageDataGenerator(
+        rescale=rescale,
+        preprocessing_function=preprocessing_function,
     )
 
-    train_gen = datagen.flow_from_directory(
-        data_dir,
+    common = dict(
+        x_col="filepath",
+        y_col="label",
         target_size=img_size,
         batch_size=batch_size,
-        class_mode='sparse',
-        subset='training',
-        shuffle=True
+        class_mode="sparse",
     )
 
-    val_gen = datagen.flow_from_directory(
-        data_dir,
-        target_size=img_size,
-        batch_size=batch_size,
-        class_mode='sparse',
-        subset='validation',
-        shuffle=False
+    train_gen = train_datagen.flow_from_dataframe(
+        train_df, shuffle=True, seed=seed, **common
+    )
+    val_gen = eval_datagen.flow_from_dataframe(
+        val_df, shuffle=False, seed=seed, **common
+    )
+    test_gen = eval_datagen.flow_from_dataframe(
+        test_df, shuffle=False, seed=seed, **common
     )
 
-    return train_gen, val_gen
+    return train_gen, val_gen, test_gen
+
+
+def compute_class_weights(train_gen):
+    """Compute per-class weights inversely proportional to class frequency.
+
+    Passes the training generator's class labels to sklearn's compute_class_weight
+    with the 'balanced' strategy, which scales each class weight so that rarer
+    classes contribute more to the loss. The result is a dict mapping class index
+    to weight, ready to pass to model.fit as `class_weight`.
+    """
+    classes = train_gen.classes
+    class_weights = compute_class_weight(
+        class_weight="balanced",
+        classes=np.unique(classes),
+        y=classes,
+    )
+    return dict(enumerate(class_weights))
+

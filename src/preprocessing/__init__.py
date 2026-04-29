@@ -3,6 +3,9 @@ from .cpu_pipelines import (
     clahe_pipeline,
     hsv_pipeline,
     median_mean_hybrid,
+    histogram_eq_pipeline,
+    sharpen_pipeline,
+    leaf_segment_pipeline,
 )
 
 __all__ = [
@@ -10,4 +13,7 @@ __all__ = [
     "clahe_pipeline",
     "hsv_pipeline",
     "median_mean_hybrid",
+    "histogram_eq_pipeline",
+    "sharpen_pipeline",
+    "leaf_segment_pipeline",
 ]
