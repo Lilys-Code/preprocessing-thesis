@@ -7,8 +7,15 @@ import tensorflow as tf
 from src.models import build_resnet_model, build_mobilenet_model, build_efficientnet_model
 from src.training import train_model
 from src.evaluation import evaluate_model
-from src.utils import time_function, save_json, save_csv, timestamp, get_data_generators
-from src.utils.data_loader import compute_class_weights
+from src.utils import (
+    time_function, 
+    save_json, 
+    save_csv, 
+    timestamp, 
+    get_data_generators, 
+    compute_class_weights, 
+    precompute_all,
+)
 from src.preprocessing import (
     clahe_pipeline,
     hsv_pipeline,
@@ -18,12 +25,14 @@ from src.preprocessing import (
     leaf_segment_pipeline,
 )
 
-SEED = 42
 PROGRESS_FILE = "logs/progress.json"
-
+SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
+
+for _gpu in tf.config.list_physical_devices("GPU"):
+    tf.config.experimental.set_memory_growth(_gpu, True)
 
 
 def load_progress():
@@ -75,9 +84,9 @@ def _merge_histories(h1, h2):
         merged[key] = h1.history[key] + (h2.history[key] if h2 is not None else [])
     return merged
 
-
 def run():
     data_dir = "data/raw"
+    preprocessed_dir = "data/preprocessed"
 
     pipelines = {
         "baseline": None,
@@ -94,6 +103,15 @@ def run():
         "mobilenetV2": build_mobilenet_model,
         "efficientnet_b0": build_efficientnet_model,
     }
+
+    # Build the dict of non-baseline pipelines to pass to precompute_all.
+    # The baseline uses raw images, so it is excluded from pre-processing.
+    non_baseline_pipelines = {k: v for k, v in pipelines.items() if v is not None}
+    print("\n" + "="*60)
+    print("Precomputing pipeline outputs to disk ...")
+    print("="*60)
+    precompute_all(data_dir, preprocessed_dir, non_baseline_pipelines, img_size=(224, 224))
+    print("Precompute step complete.")
 
     completed, results, histories = load_progress()
     total = len(models_config) * len(pipelines)
@@ -115,23 +133,20 @@ def run():
                 continue
 
             if pipeline is None:
-                preprocessing_function = None
-                rescale = 1.0 / 255.0
+                # Baseline: load raw images with standard rescaling
+                pipeline_dir = None
             else:
-                # Wrap the batch pipeline in a per-image function compatible with ImageDataGenerator
-                def preprocessing_function(img, _pipeline=pipeline):
-                    px = np.expand_dims(img, axis=0)
-                    return _pipeline(px)[0]
-                rescale = None
+                # Non-baseline: load from the precomputed directory; no runtime
+                # pipeline function needed because images are already processed.
+                pipeline_dir = os.path.join(preprocessed_dir, pipeline_name)
 
             (train_gen, val_gen, test_gen), prep_train_time = time_function(
                 get_data_generators,
                 data_dir,
                 img_size=(224, 224),
                 batch_size=32,
-                preprocessing_function=preprocessing_function,
-                rescale=rescale,
                 seed=SEED,
+                preprocessed_dir=pipeline_dir,
             )
 
             class_weight = compute_class_weights(train_gen)
@@ -178,6 +193,9 @@ def run():
             completed.add(exp_key)
             save_progress(completed, results, histories)
             print(f"    [PROGRESS] Saved ({len(completed)}/{total} done).")
+
+            del model, base_model, train_gen, val_gen, test_gen
+            tf.keras.backend.clear_session()
 
     os.makedirs("logs", exist_ok=True)
     ts = timestamp()

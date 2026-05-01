@@ -28,6 +28,7 @@ def clahe_pipeline(images):
     improves local contrast in darker or over-exposed regions of the leaf without
     introducing colour artefacts.
     """
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     processed = []
     for img in images:
         img_bgr = _to_uint8(img)
@@ -35,7 +36,6 @@ def clahe_pipeline(images):
         lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
 
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         cl = clahe.apply(l)
 
         merged = cv2.merge((cl, a, b))

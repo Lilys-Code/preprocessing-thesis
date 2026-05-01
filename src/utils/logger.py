@@ -6,12 +6,14 @@ from datetime import datetime
 
 def save_json(results, filename="results.json"):
     """Serialise `results` to a formatted JSON file."""
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     with open(filename, "w") as f:
         json.dump(results, f, indent=4)
 
 
 def save_csv(results, filename="results.csv"):
     """Write a list of dicts to a CSV file using the keys of the first entry as headers."""
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     keys = results[0].keys()
 
     with open(filename, "w", newline="") as f:

@@ -10,32 +10,37 @@ def get_data_generators(
     data_dir,
     img_size=(224, 224),
     batch_size=32,
-    preprocessing_function=None,
     train_split=0.70,
     val_split=0.15,
     rescale=1.0 / 255,
     seed=42,
+    preprocessed_dir=None,
 ):
     """Build train, validation, and test generators from a directory of class folders.
 
     The dataset is split into train/val/test using a stratified 70/15/15 ratio so
     that each subset preserves the original class distribution. The training
     generator applies random augmentation (rotations, flips, zoom, brightness
-    jitter) to improve generalisation. Validation and test generators use only the
-    rescale and preprocessing_function so that evaluation is deterministic.
-
-    The `preprocessing_function` argument is passed directly to ImageDataGenerator
-    and is used to inject a pipeline function (e.g. CLAHE or HSV conversion) into
-    the per-image loading step.
+    jitter) to improve generalisation. Validation and test generators use only
+    rescale so that evaluation is deterministic.
     """
+    
+    # Determine the root from which to enumerate files. When a preprocessed
+    # directory exists, use it and disable the runtime pipeline function.
+    if preprocessed_dir is not None and os.path.isdir(preprocessed_dir):
+        image_root = preprocessed_dir
+        rescale = 1.0 / 255
+    else:
+        image_root = data_dir
+
     filepaths, labels = [], []
     class_names = sorted(
-        d for d in os.listdir(data_dir)
-        if os.path.isdir(os.path.join(data_dir, d))
+        d for d in os.listdir(image_root)
+        if os.path.isdir(os.path.join(image_root, d))
     )
 
     for class_name in class_names:
-        class_dir = os.path.join(data_dir, class_name)
+        class_dir = os.path.join(image_root, class_name)
         for fname in os.listdir(class_dir):
             fpath = os.path.join(class_dir, fname)
             if os.path.isfile(fpath):
@@ -59,7 +64,6 @@ def get_data_generators(
     # Augmentation is applied only during training; val/test use a fixed pipeline
     train_datagen = ImageDataGenerator(
         rescale=rescale,
-        preprocessing_function=preprocessing_function,
         rotation_range=30,
         horizontal_flip=True,
         vertical_flip=True,
@@ -68,7 +72,6 @@ def get_data_generators(
     )
     eval_datagen = ImageDataGenerator(
         rescale=rescale,
-        preprocessing_function=preprocessing_function,
     )
 
     common = dict(
