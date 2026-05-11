@@ -59,12 +59,21 @@ def train_model(
             metrics=["accuracy"],
         )
 
+        fine_tune_callbacks = [
+            EarlyStopping(monitor="val_loss", patience=7, restore_best_weights=True),
+            ModelCheckpoint(
+                filepath=checkpoint_path,
+                monitor="val_loss",
+                save_best_only=True,
+            ),
+        ]
+
         history_fine = model.fit(
             train_gen,
             validation_data=val_gen,
             epochs=fine_tune_epochs,
             class_weight=class_weight,
-            callbacks=callbacks,
+            callbacks=fine_tune_callbacks,
         )
 
     return history, history_fine

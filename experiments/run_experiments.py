@@ -1,7 +1,10 @@
 import json
-import os
 import random
 import numpy as np
+
+import os
+os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=0"
+
 import tensorflow as tf
 
 from src.models import build_resnet_model, build_mobilenet_model, build_efficientnet_model
@@ -154,16 +157,21 @@ def run():
             num_classes = len(train_gen.class_indices)
             model, base_model = model_builder((224, 224, 3), num_classes)
 
+            # Warm up the model so XLA compilation happens before the clock starts.
+            dummy_batch = train_gen[0][0][:1]
+            model.predict(dummy_batch, verbose=0)
+            train_gen.on_epoch_end()  # reset generator state after the peek
+
             checkpoint_dir = f"logs/checkpoints/{model_name}_{pipeline_name}"
             (history, history_fine), train_time = time_function(
                 train_model,
                 model,
                 train_gen,
                 val_gen,
-                epochs=10,
+                epochs=20,
                 base_model=base_model,
                 fine_tune_layers=20,
-                fine_tune_epochs=10,
+                fine_tune_epochs=20,
                 class_weight=class_weight,
                 checkpoint_dir=checkpoint_dir,
             )
